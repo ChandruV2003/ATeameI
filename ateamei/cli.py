@@ -4,8 +4,7 @@ import argparse
 import asyncio
 import sys
 
-from .memory import add_entry, ask_memory, export_entries, search_entries
-from .runner import list_devices, run
+from .standup import get_standup_url, join_standup, set_standup_url, write_launchagent
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,13 +89,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.set_defaults(func=_cmd_run)
 
+    p_standup = sub.add_parser("standup", help="Standup helper (store URL, join, install schedule).")
+    standup_sub = p_standup.add_subparsers(dest="standup_cmd", required=True)
+
+    p_standup_set = standup_sub.add_parser("set-url", help="Save the standup Teams join URL locally.")
+    p_standup_set.add_argument("url", help="Teams meeting join URL.")
+    p_standup_set.set_defaults(func=_cmd_standup_set_url)
+
+    p_standup_join = standup_sub.add_parser("join", help="Open the standup Teams join URL (macOS open).")
+    p_standup_join.set_defaults(func=_cmd_standup_join)
+
+    p_standup_install = standup_sub.add_parser(
+        "install",
+        help="Create a LaunchAgent that opens the standup link at 8:30am Mon-Fri (local machine).",
+    )
+    p_standup_install.add_argument(
+        "--url",
+        default="",
+        help="Optionally set the URL before installing.",
+    )
+    p_standup_install.set_defaults(func=_cmd_standup_install)
+
+    p_standup_status = standup_sub.add_parser("status", help="Show whether the URL and LaunchAgent exist.")
+    p_standup_status.set_defaults(func=_cmd_standup_status)
+
     return parser
 
 
 def _cmd_list_devices(_: argparse.Namespace) -> int:
+    from .runner import list_devices
     return list_devices()
 
 def _cmd_mem_add(args: argparse.Namespace) -> int:
+    from .memory import add_entry
     text = ""
     if args.file:
         with open(args.file, "r", encoding="utf-8") as f:
@@ -115,6 +140,7 @@ def _cmd_mem_add(args: argparse.Namespace) -> int:
 
 
 def _cmd_mem_search(args: argparse.Namespace) -> int:
+    from .memory import search_entries
     rows = search_entries(args.query, limit=args.limit)
     for row in rows:
         print(f"{row['id']}\t{row['created_at']}\t{row['source']}\t{row['tags']}\t{row['snippet']}")
@@ -122,6 +148,7 @@ def _cmd_mem_search(args: argparse.Namespace) -> int:
 
 
 def _cmd_mem_export(args: argparse.Namespace) -> int:
+    from .memory import export_entries
     rows = export_entries(limit=args.limit)
     for row in rows:
         print(f"## {row['id']}  {row['created_at']}  source={row['source']}  tags={row['tags']}")
@@ -131,12 +158,14 @@ def _cmd_mem_export(args: argparse.Namespace) -> int:
 
 
 def _cmd_mem_ask(args: argparse.Namespace) -> int:
+    from .memory import ask_memory
     answer = asyncio.run(ask_memory(args.question, ollama_model=args.ollama_model, limit=args.limit))
     print(answer)
     return 0
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
+    from .runner import run
     return asyncio.run(
         run(
             device=args.device,
@@ -151,6 +180,48 @@ def _cmd_run(args: argparse.Namespace) -> int:
             skip_consent_prompt=args.i_have_consent,
         )
     )
+
+def _cmd_standup_set_url(args: argparse.Namespace) -> int:
+    set_standup_url(args.url)
+    print("ok")
+    return 0
+
+
+def _cmd_standup_join(_: argparse.Namespace) -> int:
+    join_standup()
+    return 0
+
+
+def _cmd_standup_install(args: argparse.Namespace) -> int:
+    if args.url:
+        set_standup_url(args.url)
+
+    url = get_standup_url()
+    if not url:
+        raise ValueError("Standup URL not configured. Run: python -m ateamei standup set-url <url>")
+
+    plist_path = write_launchagent()
+    print(f"Wrote LaunchAgent: {plist_path}")
+    print("To enable:")
+    print(f"  launchctl load -w {plist_path}")
+    print("To disable:")
+    print(f"  launchctl unload -w {plist_path}")
+    return 0
+
+
+def _cmd_standup_status(_: argparse.Namespace) -> int:
+    url = get_standup_url()
+    # We do not create files on status; just report expected locations.
+    from .standup import launchagent_path  # local import to keep CLI startup light
+    from .standup import standup_url_path
+
+    url_path = standup_url_path()
+    la_path = launchagent_path()
+
+    print(f"url_file={url_path} exists={url_path.exists()}")
+    print(f"launchagent={la_path} exists={la_path.exists()}")
+    print(f"url_set={'yes' if url else 'no'}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

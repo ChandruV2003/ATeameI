@@ -3,3 +3,15 @@
 __pycache__/
 *.pyc
 .DS_Store
+.DS_Store
+.venv/
+.venv_old/
+__pycache__/
+*.pyc
+
+# Local user config / data
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.env

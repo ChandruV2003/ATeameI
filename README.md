@@ -50,6 +50,22 @@ macOS doesn't provide a built-in “loopback” input. The usual approach is to 
 
 This prototype already supports capturing from **any** avfoundation input device—once you have a loopback device configured, pass `--device` to select it.
 
+## Standup (8:30am) helper
+Store the standup meeting URL locally (not committed):
+```bash
+python -m ateamei standup set-url "<TEAMS_JOIN_URL>"
+```
+
+Install a LaunchAgent that opens the link at **8:30am Mon–Fri**:
+```bash
+python -m ateamei standup install
+```
+
+You can also open it on-demand:
+```bash
+python -m ateamei standup join
+```
+
 ## Memory vault (lightweight “long-term memory”)
 This is a local SQLite + FTS store you can use to save **decisions, requirements, PR comments, links, and outcomes** (recommended) or paste larger chat snippets.
 
