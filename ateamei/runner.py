@@ -230,6 +230,7 @@ async def run(
         return data
 
     async def _loop(live: Live | None) -> None:
+        nonlocal suggestion, last_assistant_call
         try:
             await _emit()
             while True:
@@ -255,7 +256,8 @@ async def run(
                     text = " ".join(seg.text.strip() for seg in segments).strip()
                     if text:
                         transcript.append(TranscriptLine(t=time.time(), text=text))
-                        transcript = transcript[-200:]
+                        if len(transcript) > 200:
+                            del transcript[:-200]
 
                 if assistant_enabled and transcript:
                     now = time.time()

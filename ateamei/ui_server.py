@@ -5,6 +5,7 @@ import json
 import time
 import webbrowser
 from dataclasses import dataclass, field
+import contextlib
 
 
 @dataclass
@@ -275,23 +276,33 @@ async def serve(
 
     open_task = asyncio.create_task(_open())
     server_task = asyncio.create_task(server.serve())
-
-    # If we were given a runner task, we should stop the server when it ends.
-    tasks = [server_task, open_task]
-    if run_task is not None:
-        tasks.append(run_task)
-
     try:
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        # If the runner exits, request server shutdown.
-        if run_task is not None and run_task in done and not server.should_exit:
+        if run_task is None:
+            await server_task
+            return 0
+
+        done, _pending = await asyncio.wait(
+            [server_task, run_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        # If the runner exits, request server shutdown and wait for it.
+        if run_task in done and not server.should_exit:
             server.should_exit = True
-        # Wait a tiny bit for a clean shutdown.
-        await asyncio.sleep(0.25)
-        for t in pending:
-            t.cancel()
+            await server_task
+            return 0
+
+        # If the server exits first, stop the runner.
+        if server_task in done:
+            run_task.cancel()
+            return 0
+
         return 0
     finally:
+        open_task.cancel()
+        with contextlib.suppress(BaseException):
+            await open_task
+
         # Best-effort shutdown
         server.should_exit = True
 

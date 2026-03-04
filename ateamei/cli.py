@@ -123,8 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ui.add_argument("--sck-display-index", type=int, default=0, help="(backend=sck) Display index (default 0).")
     p_ui.add_argument(
         "--sck-app-bundle-id",
-        default="com.microsoft.teams",
-        help='(backend=sck) App bundle id to capture (default "com.microsoft.teams").',
+        default="",
+        help='(backend=sck) Optional app bundle id to capture (example: com.microsoft.teams). If omitted, captures full display audio.',
     )
     p_ui.add_argument("--sample-rate", type=int, default=16_000, help="PCM sample rate.")
     p_ui.add_argument("--channels", type=int, default=1, help="PCM channels.")

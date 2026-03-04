@@ -57,9 +57,10 @@ python -m ateamei ui --i-have-consent
 
 Defaults:
 - `--backend sck`
-- `--sck-app-bundle-id com.microsoft.teams`
 - `--chunk-seconds 1`
 - `--model tiny`
+
+Tip: if you want to filter to just Teams audio, pass `--sck-app-bundle-id` (bundle id varies by Teams version).
 
 If you want to use mic/avfoundation instead:
 ```bash

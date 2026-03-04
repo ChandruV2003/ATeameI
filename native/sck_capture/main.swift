@@ -22,6 +22,7 @@ struct Args {
     var channels: AVAudioChannelCount = 1
     var displayIndex: Int = 0
     var appBundleId: String? = nil
+    var listApps: Bool = false
 }
 
 func parseArgs() throws -> Args {
@@ -50,6 +51,8 @@ func parseArgs() throws -> Args {
             i += 1
             guard i < argv.count else { throw ArgError.missingValue(a) }
             out.appBundleId = argv[i]
+        case "--list-apps":
+            out.listApps = true
         case "-h", "--help":
             print(
                 """
@@ -59,6 +62,7 @@ func parseArgs() throws -> Args {
 
                 Usage:
                   ateamei-sck-capture [--sample-rate 16000] [--channels 1] [--display-index 0] [--app-bundle-id com.microsoft.teams]
+                  ateamei-sck-capture --list-apps
 
                 Notes:
                   - Requires macOS Screen Recording permission for this binary.
@@ -211,7 +215,13 @@ struct Main {
             }
 
             // Shareable content
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            if args.listApps {
+                for app in content.applications {
+                    FileHandle.standardOutput.write(Data("\(app.applicationName)\t\(app.bundleIdentifier)\n".utf8))
+                }
+                exit(0)
+            }
             guard args.displayIndex >= 0 && args.displayIndex < content.displays.count else {
                 throw NSError(domain: "ateamei", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid --display-index. Found \(content.displays.count) display(s)."])
             }
@@ -222,8 +232,13 @@ struct Main {
             if let bundleId = args.appBundleId {
                 if let app = content.applications.first(where: { $0.bundleIdentifier == bundleId }) {
                     filter = SCContentFilter(display: display, including: [app], exceptingWindows: [])
+                } else if let app = content.applications.first(where: { $0.applicationName.localizedCaseInsensitiveContains("Teams") }) {
+                    // Best-effort fallback: when bundle id differs (e.g., new Teams).
+                    FileHandle.standardError.write(Data("[ateamei-sck-capture] app bundle id not found: \(bundleId); falling back to Teams-like app: \(app.bundleIdentifier)\n".utf8))
+                    filter = SCContentFilter(display: display, including: [app], exceptingWindows: [])
                 } else {
-                    throw NSError(domain: "ateamei", code: 3, userInfo: [NSLocalizedDescriptionKey: "Application with bundle id not found: \(bundleId)"])
+                    FileHandle.standardError.write(Data("[ateamei-sck-capture] app bundle id not found: \(bundleId); falling back to full display capture\n".utf8))
+                    filter = SCContentFilter(display: display, excludingWindows: [])
                 }
             } else {
                 filter = SCContentFilter(display: display, excludingWindows: [])
