@@ -106,6 +106,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.set_defaults(func=_cmd_run)
 
+    p_ui = sub.add_parser("ui", help="Run local web UI (live transcript + suggested replies).")
+    p_ui.add_argument("--port", type=int, default=5080, help="Local port to bind (default 5080).")
+    p_ui.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Don't auto-open a browser tab.",
+    )
+    p_ui.add_argument(
+        "--backend",
+        choices=["ffmpeg", "sck"],
+        default="sck",
+        help="Audio capture backend (default: sck).",
+    )
+    p_ui.add_argument("--device", default=":0", help='(backend=ffmpeg) avfoundation input spec, e.g. ":0".')
+    p_ui.add_argument("--sck-display-index", type=int, default=0, help="(backend=sck) Display index (default 0).")
+    p_ui.add_argument(
+        "--sck-app-bundle-id",
+        default="com.microsoft.teams",
+        help='(backend=sck) App bundle id to capture (default "com.microsoft.teams").',
+    )
+    p_ui.add_argument("--sample-rate", type=int, default=16_000, help="PCM sample rate.")
+    p_ui.add_argument("--channels", type=int, default=1, help="PCM channels.")
+    p_ui.add_argument("--chunk-seconds", type=float, default=1.0, help="Chunk duration for transcription.")
+    p_ui.add_argument("--model", default="tiny", help="faster-whisper model (default tiny for latency).")
+    p_ui.add_argument("--ollama-model", default="mistral:7b-instruct", help="Ollama chat model.")
+    p_ui.add_argument(
+        "--no-assistant",
+        action="store_true",
+        help="Disable suggested replies (transcript only).",
+    )
+    p_ui.add_argument(
+        "--assistant-interval-seconds",
+        type=float,
+        default=6.0,
+        help="Minimum seconds between assistant calls.",
+    )
+    p_ui.add_argument(
+        "--max-context-lines",
+        type=int,
+        default=40,
+        help="How many transcript lines to include in the assistant context.",
+    )
+    p_ui.add_argument(
+        "--i-have-consent",
+        action="store_true",
+        help="Skip the interactive consent prompt.",
+    )
+    p_ui.set_defaults(func=_cmd_ui)
+
     p_standup = sub.add_parser("standup", help="Standup helper (store URL, join, install schedule).")
     standup_sub = p_standup.add_subparsers(dest="standup_cmd", required=True)
 
@@ -129,6 +178,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_standup_status = standup_sub.add_parser("status", help="Show whether the URL and LaunchAgent exist.")
     p_standup_status.set_defaults(func=_cmd_standup_status)
+
+    p_auth = sub.add_parser("auth", help="Auth helpers (store secrets in Keychain; never commit).")
+    auth_sub = p_auth.add_subparsers(dest="auth_cmd", required=True)
+
+    p_auth_set = auth_sub.add_parser("set-azdo", help="Store Azure DevOps PAT in macOS Keychain.")
+    p_auth_set.add_argument("--token", default="", help="PAT value (discouraged; prefer prompt).")
+    p_auth_set.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read PAT from stdin (e.g. pbpaste | ...).",
+    )
+    p_auth_set.set_defaults(func=_cmd_auth_set_azdo)
+
+    p_auth_unset = auth_sub.add_parser("unset-azdo", help="Remove Azure DevOps PAT from Keychain.")
+    p_auth_unset.set_defaults(func=_cmd_auth_unset_azdo)
+
+    p_auth_status = auth_sub.add_parser("status", help="Show whether auth is configured (no secrets printed).")
+    p_auth_status.set_defaults(func=_cmd_auth_status)
 
     return parser
 
@@ -201,6 +268,43 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
     )
 
+
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from .runner import run
+    from .ui_server import UiState, serve
+
+    async def _main() -> int:
+        state = UiState()
+
+        async def _runner() -> int:
+            return await run(
+                backend=args.backend,
+                device=args.device,
+                sample_rate=args.sample_rate,
+                channels=args.channels,
+                sck_display_index=args.sck_display_index,
+                sck_app_bundle_id=(args.sck_app_bundle_id or None),
+                chunk_seconds=args.chunk_seconds,
+                whisper_model=args.model,
+                ollama_model=args.ollama_model,
+                assistant_enabled=not args.no_assistant,
+                assistant_interval_seconds=args.assistant_interval_seconds,
+                max_context_lines=args.max_context_lines,
+                skip_consent_prompt=args.i_have_consent,
+                render_tui=False,
+                on_update=state.broadcast,
+            )
+
+        runner_task = asyncio.create_task(_runner())
+        return await serve(
+            state=state,
+            port=args.port,
+            open_browser=not args.no_open,
+            run_task=runner_task,
+        )
+
+    return asyncio.run(_main())
+
 def _cmd_standup_set_url(args: argparse.Namespace) -> int:
     set_standup_url(args.url)
     print("ok")
@@ -241,6 +345,43 @@ def _cmd_standup_status(_: argparse.Namespace) -> int:
     print(f"url_file={url_path} exists={url_path.exists()}")
     print(f"launchagent={la_path} exists={la_path.exists()}")
     print(f"url_set={'yes' if url else 'no'}")
+    return 0
+
+
+def _cmd_auth_set_azdo(args: argparse.Namespace) -> int:
+    from .secrets import set_azdo_pat
+
+    token = (args.token or "").strip()
+    if not token and args.stdin:
+        token = sys.stdin.read().strip()
+    if not token:
+        from getpass import getpass
+
+        token = getpass("Azure DevOps PAT (input hidden): ").strip()
+
+    set_azdo_pat(token)
+    print("ok")
+    return 0
+
+
+def _cmd_auth_unset_azdo(_: argparse.Namespace) -> int:
+    from .secrets import delete_azdo_pat
+
+    delete_azdo_pat()
+    print("ok")
+    return 0
+
+
+def _cmd_auth_status(_: argparse.Namespace) -> int:
+    import os
+
+    from .secrets import get_azdo_pat_from_keychain
+
+    env_set = bool(os.environ.get("ATEAMEI_AZDO_PAT", "").strip())
+    keychain_set = bool((get_azdo_pat_from_keychain() or "").strip())
+
+    print(f"azdo_env_set={env_set}")
+    print(f"azdo_keychain_set={keychain_set}")
     return 0
 
 

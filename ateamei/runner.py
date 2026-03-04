@@ -10,6 +10,7 @@ import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from faster_whisper import WhisperModel
 from rich.console import Console
@@ -136,6 +137,9 @@ def _render(transcript: list[TranscriptLine], suggestion: str, status: str) -> T
     return outer
 
 
+UpdateCallback = Callable[[dict], Awaitable[None]]
+
+
 async def run(
     *,
     backend: str,
@@ -151,6 +155,8 @@ async def run(
     assistant_interval_seconds: float,
     max_context_lines: int,
     skip_consent_prompt: bool,
+    render_tui: bool = True,
+    on_update: UpdateCallback | None = None,
 ) -> int:
     if not skip_consent_prompt:
         console.print(
@@ -198,6 +204,16 @@ async def run(
     status = f"backend={backend} device={device} sr={sample_rate} ch={channels} chunk={chunk_seconds:.1f}s whisper={whisper_model} assistant={'on' if assistant_enabled else 'off'}"
     stderr_tail: bytearray = bytearray()
 
+    async def _emit() -> None:
+        if on_update is None:
+            return
+        payload = {
+            "status": status,
+            "suggestion": suggestion,
+            "transcript": [{"t": l.t, "text": l.text} for l in transcript[-80:]],
+        }
+        await on_update(payload)
+
     async def _drain_stderr() -> None:
         while True:
             chunk = await proc.stderr.read(4096)
@@ -213,8 +229,9 @@ async def run(
         data = await proc.stdout.readexactly(chunk_bytes)
         return data
 
-    with Live(_render(transcript, suggestion, status), refresh_per_second=6, console=console) as live:
+    async def _loop(live: Live | None) -> None:
         try:
+            await _emit()
             while True:
                 try:
                     raw = await _read_chunk()
@@ -251,7 +268,9 @@ async def run(
                             suggestion = f"(assistant error: {exc})"
                         last_assistant_call = now
 
-                live.update(_render(transcript, suggestion, status))
+                if live is not None:
+                    live.update(_render(transcript, suggestion, status))
+                await _emit()
 
         finally:
             proc.kill()
@@ -260,6 +279,12 @@ async def run(
             stderr_task.cancel()
             with contextlib.suppress(Exception):
                 await stderr_task
+
+    if render_tui:
+        with Live(_render(transcript, suggestion, status), refresh_per_second=6, console=console) as live:
+            await _loop(live)
+    else:
+        await _loop(None)
 
     if proc.returncode and proc.returncode != 0 and stderr_tail:
         console.print(Panel.fit(stderr_tail.decode(errors="replace"), title="Capture stderr", border_style="red"))

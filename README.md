@@ -49,6 +49,23 @@ python -m ateamei run --i-have-consent --chunk-seconds 4 --model small --ollama-
 ## (Optional) System audio capture (higher fidelity)
 This prototype supports two approaches:
 
+## Web UI (recommended during calls)
+Runs a local web UI with the transcript + suggested reply:
+```bash
+python -m ateamei ui --i-have-consent
+```
+
+Defaults:
+- `--backend sck`
+- `--sck-app-bundle-id com.microsoft.teams`
+- `--chunk-seconds 1`
+- `--model tiny`
+
+If you want to use mic/avfoundation instead:
+```bash
+python -m ateamei ui --backend ffmpeg --device ":0" --i-have-consent
+```
+
 ### Option A: Native system/app audio via ScreenCaptureKit (no virtual driver)
 Requires macOS 13+ (build script targets 13.0).
 
@@ -77,6 +94,24 @@ Once configured, select that device index using `list-devices` and then pass `--
 ```bash
 python -m ateamei list-devices
 python -m ateamei run --backend ffmpeg --device ":<INDEX>" --i-have-consent
+```
+
+## Auth (Azure DevOps PAT)
+Never commit or paste PATs into git.
+
+Store your Azure DevOps PAT in macOS Keychain:
+```bash
+python -m ateamei auth set-azdo
+```
+
+Check whether it’s configured (does not print the PAT):
+```bash
+python -m ateamei auth status
+```
+
+Remove it:
+```bash
+python -m ateamei auth unset-azdo
 ```
 
 ## Standup (8:30am) helper
