@@ -48,9 +48,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_run = sub.add_parser("run", help="Run transcription + assistant loop.")
     p_run.add_argument(
+        "--backend",
+        choices=["ffmpeg", "sck"],
+        default="ffmpeg",
+        help="Audio capture backend. ffmpeg=avfoundation input device, sck=ScreenCaptureKit system/app audio (macOS).",
+    )
+    p_run.add_argument(
         "--device",
         default=":0",
         help='ffmpeg avfoundation input spec (audio-only is typically ":<index>"). Default ":0".',
+    )
+    p_run.add_argument(
+        "--sck-display-index",
+        type=int,
+        default=0,
+        help="(backend=sck) Display index to capture (usually 0 for main display).",
+    )
+    p_run.add_argument(
+        "--sck-app-bundle-id",
+        default="",
+        help="(backend=sck) Optional bundle id to filter capture to a single app (e.g. com.microsoft.teams).",
     )
     p_run.add_argument("--sample-rate", type=int, default=16_000, help="PCM sample rate.")
     p_run.add_argument("--channels", type=int, default=1, help="PCM channels.")
@@ -168,9 +185,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from .runner import run
     return asyncio.run(
         run(
+            backend=args.backend,
             device=args.device,
             sample_rate=args.sample_rate,
             channels=args.channels,
+            sck_display_index=args.sck_display_index,
+            sck_app_bundle_id=(args.sck_app_bundle_id or None),
             chunk_seconds=args.chunk_seconds,
             whisper_model=args.model,
             ollama_model=args.ollama_model,

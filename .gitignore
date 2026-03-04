@@ -15,3 +15,6 @@ __pycache__/
 *.sqlite3
 *.db
 *.env
+
+# Build artifacts
+bin/

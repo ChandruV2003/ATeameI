@@ -9,6 +9,7 @@ import textwrap
 import time
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 
 from faster_whisper import WhisperModel
 from rich.console import Console
@@ -29,6 +30,63 @@ def list_devices() -> int:
     output = (proc.stdout or "") + (proc.stderr or "")
     console.print(Panel.fit(output.strip() or "(no output)", title="ffmpeg device list"))
     return 0
+
+
+def _project_root() -> Path:
+    # Repo-local layout helper (this prototype is intended to run from source).
+    return Path(__file__).resolve().parents[1]
+
+
+def _build_capture_cmd(
+    *,
+    backend: str,
+    device: str,
+    sample_rate: int,
+    channels: int,
+    sck_display_index: int,
+    sck_app_bundle_id: str | None,
+) -> list[str]:
+    if backend == "ffmpeg":
+        return [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "avfoundation",
+            "-i",
+            device,
+            "-ac",
+            str(channels),
+            "-ar",
+            str(sample_rate),
+            "-f",
+            "s16le",
+            "-",
+        ]
+
+    if backend == "sck":
+        binary = _project_root() / "bin" / "ateamei-sck-capture"
+        if not binary.exists():
+            raise FileNotFoundError(
+                "ScreenCaptureKit capture binary not found.\n"
+                "Build it once with:\n"
+                "  bash scripts/build_sck_capture.sh"
+            )
+        cmd = [
+            str(binary),
+            "--sample-rate",
+            str(sample_rate),
+            "--channels",
+            str(channels),
+            "--display-index",
+            str(sck_display_index),
+        ]
+        if sck_app_bundle_id:
+            cmd += ["--app-bundle-id", sck_app_bundle_id]
+        return cmd
+
+    raise ValueError(f"Unknown backend: {backend}")
 
 
 @dataclass
@@ -80,9 +138,12 @@ def _render(transcript: list[TranscriptLine], suggestion: str, status: str) -> T
 
 async def run(
     *,
+    backend: str,
     device: str,
     sample_rate: int,
     channels: int,
+    sck_display_index: int,
+    sck_app_bundle_id: str | None,
     chunk_seconds: float,
     whisper_model: str,
     ollama_model: str,
@@ -113,36 +174,40 @@ async def run(
     bytes_per_sample = 2  # s16le
     chunk_bytes = int(sample_rate * channels * bytes_per_sample * chunk_seconds)
 
-    ffmpeg_cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "avfoundation",
-        "-i",
-        device,
-        "-ac",
-        str(channels),
-        "-ar",
-        str(sample_rate),
-        "-f",
-        "s16le",
-        "-",
-    ]
+    capture_cmd = _build_capture_cmd(
+        backend=backend,
+        device=device,
+        sample_rate=sample_rate,
+        channels=channels,
+        sck_display_index=sck_display_index,
+        sck_app_bundle_id=sck_app_bundle_id,
+    )
 
     proc = await asyncio.create_subprocess_exec(
-        *ffmpeg_cmd,
+        *capture_cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     assert proc.stdout is not None
+    assert proc.stderr is not None
 
     transcript: list[TranscriptLine] = []
     suggestion: str = ""
     last_assistant_call = 0.0
 
-    status = f"device={device} sr={sample_rate} ch={channels} chunk={chunk_seconds:.1f}s whisper={whisper_model} assistant={'on' if assistant_enabled else 'off'}"
+    status = f"backend={backend} device={device} sr={sample_rate} ch={channels} chunk={chunk_seconds:.1f}s whisper={whisper_model} assistant={'on' if assistant_enabled else 'off'}"
+    stderr_tail: bytearray = bytearray()
+
+    async def _drain_stderr() -> None:
+        while True:
+            chunk = await proc.stderr.read(4096)
+            if not chunk:
+                break
+            stderr_tail.extend(chunk)
+            if len(stderr_tail) > 12_000:
+                del stderr_tail[:-12_000]
+
+    stderr_task = asyncio.create_task(_drain_stderr())
 
     async def _read_chunk() -> bytes:
         data = await proc.stdout.readexactly(chunk_bytes)
@@ -192,5 +257,11 @@ async def run(
             proc.kill()
             with contextlib.suppress(Exception):
                 await proc.wait()
+            stderr_task.cancel()
+            with contextlib.suppress(Exception):
+                await stderr_task
+
+    if proc.returncode and proc.returncode != 0 and stderr_tail:
+        console.print(Panel.fit(stderr_tail.decode(errors="replace"), title="Capture stderr", border_style="red"))
 
     return 0

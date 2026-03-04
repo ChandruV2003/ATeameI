@@ -13,6 +13,7 @@ Only use this with **explicit consent** from meeting participants and in complia
 - `ffmpeg` installed (`brew install ffmpeg`)
 - Python 3.11 (`python3.11`)
 - `ollama` installed + a chat model pulled (default: `mistral:7b-instruct`)
+- For system audio capture without a virtual device: Swift toolchain (Xcode Command Line Tools) + Screen Recording permission
 
 ## Setup
 ```bash
@@ -46,9 +47,37 @@ python -m ateamei run --i-have-consent --chunk-seconds 4 --model small --ollama-
 ```
 
 ## (Optional) System audio capture (higher fidelity)
-macOS doesn't provide a built-in “loopback” input. The usual approach is to install a virtual device (e.g., BlackHole) and route Teams output into it.
+This prototype supports two approaches:
 
-This prototype already supports capturing from **any** avfoundation input device—once you have a loopback device configured, pass `--device` to select it.
+### Option A: Native system/app audio via ScreenCaptureKit (no virtual driver)
+Requires macOS 13+ (build script targets 13.0).
+
+Build the local capture helper (writes to `bin/ateamei-sck-capture`):
+```bash
+bash scripts/build_sck_capture.sh
+```
+
+The first time you run it, macOS will require **Screen Recording** permission for the compiled binary. If capture fails, enable it in:
+System Settings → Privacy & Security → Screen Recording.
+
+Run with the ScreenCaptureKit backend:
+```bash
+python -m ateamei run --backend sck --i-have-consent --chunk-seconds 1 --model tiny
+```
+
+If you want to capture only Teams (recommended), pass the bundle id:
+```bash
+python -m ateamei run --backend sck --sck-app-bundle-id com.microsoft.teams --i-have-consent --chunk-seconds 1 --model tiny
+```
+
+### Option B: Virtual audio device + ffmpeg (avfoundation)
+macOS doesn’t provide a built-in “loopback” input, so some setups use a virtual device (e.g., BlackHole) and route Teams output into it.
+
+Once configured, select that device index using `list-devices` and then pass `--device`:
+```bash
+python -m ateamei list-devices
+python -m ateamei run --backend ffmpeg --device ":<INDEX>" --i-have-consent
+```
 
 ## Standup (8:30am) helper
 Store the standup meeting URL locally (not committed):
