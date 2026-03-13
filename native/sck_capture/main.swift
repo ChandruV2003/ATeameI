@@ -200,7 +200,18 @@ final class AudioPipe: NSObject, SCStreamOutput {
 
 @main
 struct Main {
-    static func main() async {
+    private static var keepAliveStream: SCStream? = nil
+
+    static func main() {
+        Task {
+            await asyncMain()
+        }
+
+        // Keep the process alive until killed.
+        RunLoop.main.run()
+    }
+
+    private static func asyncMain() async {
         do {
             let args = try parseArgs()
 
@@ -257,10 +268,8 @@ struct Main {
             let stream = SCStream(filter: filter, configuration: cfg, delegate: nil)
             try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: queue)
 
+            keepAliveStream = stream
             try await stream.startCapture()
-
-            // Keep running until killed.
-            dispatchMain()
         } catch {
             FileHandle.standardError.write(Data("[ateamei-sck-capture] \(error)\n".utf8))
             exit(1)
